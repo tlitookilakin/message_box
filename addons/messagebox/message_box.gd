@@ -17,6 +17,7 @@ var _done = false
 var _last_char = 0
 var _accel = false
 var _cool = true
+var _ready = false
 #github 37720
 var _line_size = 1
 var _max_lines = 1
@@ -32,6 +33,7 @@ func _init():
 func _ready():
 	if Engine.editor_hint:
 		return
+	_ready = true
 	add_child(_tween)
 	add_child(_cooldown)
 	self.player = player
@@ -51,7 +53,7 @@ func _ready():
 
 func _set_player(path):
 	player = path
-	if Engine.editor_hint:
+	if !_ready:
 		return
 	_player = get_node(path)
 	if _player != null:
