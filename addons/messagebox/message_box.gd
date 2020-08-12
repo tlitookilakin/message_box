@@ -44,10 +44,6 @@ func _ready():
 	add_child(_tween)
 	add_child(_cooldown)
 	
-	# this seems dumb but it's necessary
-	# bc the setget fires before the node is ready
-	self.player = player
-	
 	_tween.connect("tween_all_completed", self, "_on_done")
 	_cooldown.connect("timeout", self, "_on_cool")
 	connect("resized", self, "_resized")
@@ -63,6 +59,11 @@ func _ready():
 	
 	_resized()
 	_isready = true
+	
+	# this seems dumb but it's necessary
+	# bc the setget fires before the node is ready
+	self.player = player
+	
 	_start_msg()
 
 
@@ -70,7 +71,7 @@ func _unhandled_input(event):
 	if _tween == null or event.echo:
 		return
 	
-	if event.is_action_pressed(skip_action):
+	if InputMap.has_action(skip_action) and event.is_action_pressed(skip_action):
 		if !_done and _cool:
 			if speed >= 0:
 				_tween.seek(_tween.get_runtime() * _tween.playback_speed)
@@ -78,12 +79,12 @@ func _unhandled_input(event):
 				_tween.seek(0)
 			get_tree().set_input_as_handled()
 	
-	elif event.is_action_pressed(accelerate_action):
+	elif InputMap.has_action(accelerate_action) and event.is_action_pressed(accelerate_action):
 		_accel = true
 		_tween.playback_speed = speed * _speed_mult * acceleration
 		get_tree().set_input_as_handled()
 	
-	elif event.is_action_released(accelerate_action):
+	elif InputMap.has_action(accelerate_action) and event.is_action_released(accelerate_action):
 		_accel = false
 		_tween.playback_speed = speed * _speed_mult
 		get_tree().set_input_as_handled()
