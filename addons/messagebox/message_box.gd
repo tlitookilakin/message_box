@@ -68,7 +68,7 @@ func _ready():
 
 
 func _unhandled_input(event):
-	if _tween == null or event.echo:
+	if _tween == null or event.is_echo():
 		return
 	
 	if InputMap.has_action(skip_action) and event.is_action_pressed(skip_action):
