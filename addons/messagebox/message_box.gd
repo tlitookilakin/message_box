@@ -3,6 +3,8 @@ extends RichTextLabel
 # Provides a character-by-character rich text box
 
 signal message_done
+signal paused
+signal unpaused
 
 export(float) var speed = 1 setget _set_speed
 export(float) var acceleration = 2 setget _set_accel
@@ -11,7 +13,15 @@ export(String) var skip_action = ""
 export(String) var accelerate_action = ""
 export(Array, AudioStream) var voice = []
 export(NodePath) var player = "" setget _set_player
+export(bool) var autoscroll = true
+export(bool) var use_alt_scroll = false
+# whether or not to use the alternate autoscroll.
+# alternate method is less accurate but smoother and always works.
 
+# publics
+var playing: bool = false setget _set_active, _get_active
+
+# privates
 var _isready: bool = false
 var _speed_mult: float = 1
 var _last_speed: float = 1
@@ -20,10 +30,11 @@ var _last_char: int = 0
 var _accel: bool = false
 var _cool: bool = true
 var _player: Node = null
-#github 37720
+# github 37720
 var _line_size: int = 1
 var _max_lines: int = 1
-#end hacks
+var _scroll_pos: float = 0.0 setget _scroll_to
+# end hacks
 onready var _tween: Tween = Tween.new()
 onready var _old_theme: Theme = theme
 onready var _cooldown: Timer = Timer.new()
@@ -51,7 +62,6 @@ func _ready():
 	_cooldown.wait_time = .1
 	bbcode_enabled = true
 	scroll_active = false
-	scroll_following = false
 	
 	var sbb = speedbb.new()
 	sbb.caller = self
@@ -73,10 +83,7 @@ func _unhandled_input(event):
 	
 	if InputMap.has_action(skip_action) and event.is_action_pressed(skip_action):
 		if !_done and _cool:
-			if speed >= 0:
-				_tween.seek(_tween.get_runtime() * _tween.playback_speed)
-			else:
-				_tween.seek(0)
+			stop()
 			get_tree().set_input_as_handled()
 	
 	elif InputMap.has_action(accelerate_action) and event.is_action_pressed(accelerate_action):
@@ -94,16 +101,23 @@ func _process(delta):
 	if Engine.editor_hint:
 		return
 	
+	# disables broken autoscroll
+	scroll_following = false
+	
 	# recalculate sizing when theme is changed
 	if theme != _old_theme:
 		_old_theme = theme
 		_resized()
 	
 	# scroll up or down to show current text
-	if get_visible_line_count() > _max_lines and visible_characters > 0 and speed > 0:
-		_scroll(3)
-	if get_visible_line_count() <= _max_lines and visible_characters > 0 and speed < 0:
-		_scroll(-3)
+	if autoscroll:
+		if use_alt_scroll:
+			_scroll_to(percent_visible * (get_content_height() - get_rect().size.y))
+		else:
+			if get_visible_line_count() > _max_lines and visible_characters > 0 and speed > 0:
+				_scroll(1)
+			if get_visible_line_count() <= _max_lines and visible_characters > 0 and speed < 0:
+				_scroll(-1)
 	
 	# inline speed multiplier change
 	if _speed_mult != _last_speed:
@@ -121,7 +135,47 @@ func _process(delta):
 		_player.stream = voice[round(rand_range(0, voice.size() - 1))]
 		_player.play()
 
+### Other ###
+
+func play():
+	if !_isready:
+		return
+	_tween.set_active(true)
+	emit_signal("unpaused", _tween.tell())
+
+func pause():
+	if !_isready:
+		return
+	_tween.set_active(false)
+	emit_signal("paused", _tween.tell())
+
+func stop():
+	if !_isready:
+		return
+	if speed >= 0:
+		_tween.seek(_tween.get_runtime() * _tween.playback_speed)
+	else:
+		_tween.seek(0)
+
+func reset():
+	if !_isready:
+		return
+	if speed < 0:
+		_tween.seek(_tween.get_runtime() * _tween.playback_speed)
+	else:
+		_tween.seek(0)
+	
+
 ### Setgets ###
+
+func _set_active(val):
+	if val:
+		play()
+	else:
+		pause()
+
+func _get_active():
+	return _tween.is_active() if _isready else false 
 
 func _set_player(path: NodePath):
 	player = path
@@ -143,9 +197,7 @@ func _set_speed(val: float):
 	if val != 0:
 		_tween.playback_speed = _speed_mult * speed
 	else:
-		_tween.stop_all()
-		percent_visible = 1.0
-		_on_done()
+		stop()
 
 
 func _set_accel(val: float):
@@ -162,6 +214,10 @@ func _set_message(val: String):
 	message = val
 	if _isready:
 		_start_msg()
+
+func _scroll_to(val):
+	_scroll_pos = min(val, get_v_scroll().max_value)
+	get_v_scroll().value = val
 
 ### signal callbacks ###
 
@@ -181,7 +237,7 @@ func _resized():
 ### other ###
 
 func _scroll(v: float):
-	get_v_scroll().value += v
+	_scroll_to(_scroll_pos + v)
 
 
 func _block_speed(val: float):
@@ -203,9 +259,10 @@ func _start_msg():
 		if speed < 0:
 			_tween.interpolate_property(self, "visible_characters", 0, text.length() + 1,text.length() + 1)
 			_tween.seek(text.length() + .9)
-			get_v_scroll().value = get_v_scroll().max_value
+			_scroll_to(get_v_scroll().max_value)
 		else:
 			_tween.interpolate_property(self, "percent_visible", 0.0, 1.0, text.length())
+			_scroll_to(0)
 		_tween.start()
 	else:
 		percent_visible = 1.0
