@@ -193,6 +193,7 @@ func install_transition(transition: RichTextEffect):
 
 func remove_transition(transition: RichTextEffect):
 	custom_effects.erase(transition)
+	transitions.erase(transition)
 
 ### Setgets ###
 
