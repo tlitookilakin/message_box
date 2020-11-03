@@ -13,13 +13,14 @@ export(String) var skip_action = ""
 export(String) var accelerate_action = ""
 export(Array, AudioStream) var voice = []
 export(NodePath) var player = "" setget _set_player
+export(Array, RichTextEffect) var transitions = [] setget _set_transitions
 export(bool) var autoscroll = true
 export(bool) var use_alt_scroll = false
 # whether or not to use the alternate autoscroll.
 # alternate method is less accurate but smoother and always works.
 
 # publics
-var playing: bool = false setget _set_active, _get_active
+var playing: bool = false setget _set_active
 
 # privates
 var _isready: bool = false
@@ -30,6 +31,8 @@ var _last_char: int = 0
 var _accel: bool = false
 var _cool: bool = true
 var _player: Node = null
+var _chars: int = 0
+var _t_time: float = 0
 # github 37720
 var _line_size: int = 1
 var _max_lines: int = 1
@@ -46,7 +49,6 @@ onready var _cooldown: Timer = Timer.new()
 
 func _init():
 	scroll_active = false
-
 
 func _ready():
 	if Engine.editor_hint:
@@ -73,6 +75,8 @@ func _ready():
 	# this seems dumb but it's necessary
 	# bc the setget fires before the node is ready
 	self.player = player
+	for t in transitions:
+		install_transition(t)
 	
 	_start_msg()
 
@@ -134,6 +138,10 @@ func _process(delta):
 		_player.stop()
 		_player.stream = voice[round(rand_range(0, voice.size() - 1))]
 		_player.play()
+	
+	if playing:
+		# updates transition time
+		_t_time += delta * _tween.playback_speed
 
 ### Other ###
 
@@ -141,30 +149,50 @@ func play():
 	if !_isready:
 		return
 	_tween.set_active(true)
+	playing = true
 	emit_signal("unpaused", _tween.tell())
 
 func pause():
 	if !_isready:
 		return
 	_tween.set_active(false)
+	playing = false
 	emit_signal("paused", _tween.tell())
 
 func stop():
 	if !_isready:
 		return
+	playing = false
 	if speed >= 0:
+		_t_time = _tween.get_runtime() * _tween.playback_speed
 		_tween.seek(_tween.get_runtime() * _tween.playback_speed)
 	else:
+		_t_time = 0
 		_tween.seek(0)
 
 func reset():
 	if !_isready:
 		return
+	playing = true
 	if speed < 0:
-		_tween.seek(_tween.get_runtime() * _tween.playback_speed)
+		_t_time = _tween.get_runtime() * _tween.playback_speed - .1
+		_tween.seek(_tween.get_runtime() * _tween.playback_speed - .1)
 	else:
+		_t_time = 0
 		_tween.seek(0)
-	
+
+# use this INSTEAD OF 'install_effect' to install transition effects
+func install_transition(transition: RichTextEffect):
+	if !_isready or transition == null:
+		return
+	if transition.owner != null:
+		print("WARNING: Transition instances should not be shared between messageboxes! Unexpected behavior may occur!")
+		return
+	transition.owner = self
+	install_effect(transition)
+
+func remove_transition(transition: RichTextEffect):
+	custom_effects.erase(transition)
 
 ### Setgets ###
 
@@ -173,9 +201,6 @@ func _set_active(val):
 		play()
 	else:
 		pause()
-
-func _get_active():
-	return _tween.is_active() if _isready else false 
 
 func _set_player(path: NodePath):
 	player = path
@@ -186,7 +211,6 @@ func _set_player(path: NodePath):
 	_player = get_node(path)
 	if _player != null:
 		_player.autoplay = false
-
 
 func _set_speed(val: float):
 	speed = float(val)
@@ -199,7 +223,6 @@ func _set_speed(val: float):
 	else:
 		stop()
 
-
 func _set_accel(val: float):
 	if val <= 0:
 		return
@@ -208,16 +231,26 @@ func _set_accel(val: float):
 	if _accel and _tween != null:
 		_tween.playback_speed = _speed_mult * speed * acceleration
 
-
 func _set_message(val: String):
 	bbcode_text = val
 	message = val
 	if _isready:
 		_start_msg()
 
-func _scroll_to(val):
-	_scroll_pos = min(val, get_v_scroll().max_value)
-	get_v_scroll().value = val
+
+func _set_transitions(trans: Array):
+	if !_isready:
+		transitions = trans
+		return
+	# when existing removed
+	for t in transitions:
+		if trans.find(t) == -1:
+			custom_effects.erase(t)
+	# when new added
+	for t in trans:
+		if transitions.find(t) == -1:
+			install_transition(t)
+	transitions = trans
 
 ### signal callbacks ###
 
@@ -239,17 +272,33 @@ func _resized():
 func _scroll(v: float):
 	_scroll_to(_scroll_pos + v)
 
+func _scroll_to(val):
+	_scroll_pos = min(val, get_v_scroll().max_value)
+	get_v_scroll().value = val
+
 
 func _block_speed(val: float):
 	if val > 0:
 		_speed_mult = val
 
+# returns % completion of transition as float
+func _get_delta(ind: int, length: float) -> float:
+	if speed == 0:
+		return 1.0
+	elif speed > 0:
+		var lentime = length * speed * acceleration if _accel else length * speed
+		return smoothstep(_t_time, _t_time - lentime, ind)
+	else:
+		var lentime = length * speed * acceleration if _accel else length * speed
+		return smoothstep(_t_time, _t_time + lentime, ind)
 
 func _start_msg():
 	_speed_mult = 1
 	_last_speed = 1
 	_cool = false
 	_cooldown.start()
+	_chars = text.length()
+	playing = true
 	if _tween.is_active():
 		_tween.remove_all()
 	
@@ -257,15 +306,18 @@ func _start_msg():
 		_tween.playback_speed = speed
 		_done = false
 		if speed < 0:
-			_tween.interpolate_property(self, "visible_characters", 0, text.length() + 1,text.length() + 1)
-			_tween.seek(text.length() + .9)
+			_tween.interpolate_property(self, "visible_characters", 0, _chars + 1,_chars + 1)
+			_tween.seek(_chars + .9)
 			_scroll_to(get_v_scroll().max_value)
+			_t_time = _chars + .9
 		else:
-			_tween.interpolate_property(self, "percent_visible", 0.0, 1.0, text.length())
+			_tween.interpolate_property(self, "percent_visible", 0.0, 1.0, _chars)
 			_scroll_to(0)
+			_t_time = 0
 		_tween.start()
 	else:
 		percent_visible = 1.0
+		_t_time = 0
 		_on_done()
 
 
